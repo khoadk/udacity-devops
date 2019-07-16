@@ -1,4 +1,4 @@
-# Create infra then servers.
+# How to Deploy: Create infra then servers.
 
 # Project Introduction
 As your final project, you'll be faced with a real scenario.
