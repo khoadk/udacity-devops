@@ -1,0 +1,271 @@
+Description: >
+  Khoa Nguyen. 
+  Udacity 2019 Devops Nano.
+  Project 2.
+  Servers.
+
+Parameters:
+# whatever you consider a changing value, put it as a parameter (from infrastructure-params.json) 
+# instead of hard-coding it into your script
+  EnvironmentName:
+    Description: An Environment name that will be prefixed to resources
+    Type: String
+
+  SSHLocation:
+    Description: >-
+      Lockdown SSH access to the bastion host (default can be accessed from
+      anywhere)
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid CIDR range of the form x.x.x.x/x.
+  
+  WebServerInstanceType:
+    Description: WebServer Server EC2 instance type
+    Type: String
+    Default: t2.medium
+    
+  WebServerCount:
+    Description: Number of EC2 instances to launch for the WebServer server
+    Type: Number
+    Default: '1'
+
+Mappings:
+  Region2Examples:
+    us-west-2:
+      Examples: 'https://s3-us-west-2.amazonaws.com/cloudformation-examples-us-west-2'
+  
+  AWSInstanceType2Arch:
+    t2.medium:
+      Arch: HVM64     
+
+  AWSRegionArch2AMI:
+    us-west-2:
+      HVM64: ami-01e24be29428c15b2
+
+
+Resources:
+
+  PublicLoadBalancerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Public ELB Security Group with HTTP access on port 80 from the internet
+      VpcId: 
+        Fn::ImportValue: 
+          !Sub ${EnvironmentName}-VPCID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+
+  WebServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: >-
+        Allow access from load balancer and bastion as well as outbound HTTP and
+        HTTPS traffic
+      VpcId: 
+        Fn::ImportValue: 
+          !Sub ${EnvironmentName}-VPCID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          SourceSecurityGroupId: !Ref PublicLoadBalancerSecurityGroup
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: !Ref SSHLocation
+
+  PublicApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+        - Fn::ImportValue: 
+            !Sub "${EnvironmentName}-PublicSubnet1"
+        - Fn::ImportValue: 
+            !Sub "${EnvironmentName}-PublicSubnet2"
+      SecurityGroups:
+        - !Ref PublicLoadBalancerSecurityGroup
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 90
+      HealthCheckTimeoutSeconds: 60
+      HealthyThresholdCount: 3
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: 
+        Fn::ImportValue: 
+          !Sub ${EnvironmentName}-VPCID
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref PublicApplicationLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+
+  ALBListenerGroup:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+      - Type: forward
+        TargetGroupArn: !Ref ALBTargetGroup
+      Conditions:
+      - Field: path-pattern
+        Values: [/]
+      ListenerArn: !Ref ALBListener
+      Priority: 1
+
+  WebServerFleet:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - Fn::ImportValue: 
+            !Sub "${EnvironmentName}-PrivateSubnet1"
+        - Fn::ImportValue: 
+            !Sub "${EnvironmentName}-PrivateSubnet2"
+      LaunchConfigurationName: !Ref WebServerLaunchConfig
+      MinSize: '1'
+      MaxSize: '2'
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+
+  WebServerLaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Metadata:
+      'AWS::CloudFormation::Init':
+        config:
+          packages:
+            yum:
+              httpd: []
+          files:
+            /var/www/html/index.html:
+              content: !Join 
+                - |+
+
+                - - <img src="
+                  - !FindInMap 
+                    - Region2Examples
+                    - !Ref 'AWS::Region'
+                    - Examples
+                  - /cloudformation_graphic.png" alt="AWS CloudFormation Logo"/>
+                  - >-
+                    <h1>it works! Udagram, Udacity.</h1>
+              mode: '000644'
+              owner: root
+              group: root
+            /etc/cfn/cfn-hup.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [main]
+                  - stack=
+                  - !Ref 'AWS::StackId'
+                  - |+
+
+                  - region=
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [cfn-auto-reloader-hook]
+                  - |
+                    triggers=post.update
+                  - >
+                    path=Resources.WebServerLaunchConfig.Metadata.AWS::CloudFormation::Init
+                  - 'action=/opt/aws/bin/cfn-init -v '
+                  - '         --stack '
+                  - !Ref 'AWS::StackName'
+                  - '         --resource WebServerLaunchConfig '
+                  - '         --region '
+                  - !Ref 'AWS::Region'
+                  - |+
+
+                  - |
+                    runas=root
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/httpd/conf.d/aptobackend.conf
+                  - /var/www/html/index.html
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+    Properties:
+      ImageId: !FindInMap 
+        - AWSRegionArch2AMI
+        - !Ref 'AWS::Region'
+        - !FindInMap 
+          - AWSInstanceType2Arch
+          - !Ref WebServerInstanceType
+          - Arch
+      SecurityGroups:
+        - !Ref WebServerSecurityGroup
+      InstanceType: !Ref WebServerInstanceType
+      AssociatePublicIpAddress: 'true'
+      BlockDeviceMappings:
+      - DeviceName: "/dev/sdk"
+        Ebs:
+          VolumeSize: '10'
+      UserData: !Base64 
+        'Fn::Join':
+          - ''
+          - - |
+              #!/bin/bash -xe
+            - |
+              yum update -y aws-cfn-bootstrap
+            - |
+              # Install the sample application
+            - '/opt/aws/bin/cfn-init -v '
+            - '    --stack '
+            - !Ref 'AWS::StackId'
+            - '    --resource WebServerLaunchConfig '
+            - '    --region '
+            - !Ref 'AWS::Region'
+            - |+
+
+            - |
+              # Signal copletion
+            - '/opt/aws/bin/cfn-signal -e $? '
+            - '    --stack '
+            - !Ref 'AWS::StackId'
+            - '    --resource WebServerFleet '
+            - '    --region '
+            - !Ref 'AWS::Region'
+            - |+
+
+
+Outputs:
+  WebSite:
+    Description: URL of the website
+    Value: !Join ['', ['http://', !GetAtt [PublicApplicationLoadBalancer, DNSName]]]
