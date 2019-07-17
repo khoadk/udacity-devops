@@ -4,7 +4,7 @@ DevOps Engineers optimize, automate, and monitor development pipelines. They foc
 
 In the program:
 
-- Deploy and maintain infrastructure as code (IAC) securely with CloudFormation and Ansible.
-- Create Continuous Integration / Continuous Delivery (CI/CD) pipelines with Jenkins.
-- Monitor and log changes in your system with Kibana and Grafana.
-- Operationalize scaleable microservices with Kubernetes.
+- Project 1: Deploy and maintain infrastructure as code (IAC) securely with CloudFormation and Ansible.
+- Project 2: Create Continuous Integration / Continuous Delivery (CI/CD) pipelines with Jenkins.
+- Project 3: Monitor and log changes in your system with Kibana and Grafana.
+- Project 4: Operationalize scaleable microservices with Kubernetes.
